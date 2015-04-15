@@ -1,3 +1,9 @@
+/*
+	windd64 (c) Luis González Fernández 2015
+	luisgf@luisgf.es
+	https://www.luisgf.es/
+*/
+
 #pragma once
 
 #include "targetver.h"

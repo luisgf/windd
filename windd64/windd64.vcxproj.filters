@@ -43,5 +43,8 @@
     <Image Include="..\..\..\..\..\..\Users\e332537\Desktop\diskstruct.ico">
       <Filter>Resource Files</Filter>
     </Image>
+    <Image Include="..\..\..\..\..\..\Users\e332537\Downloads\dumphd.ico">
+      <Filter>Resource Files</Filter>
+    </Image>
   </ItemGroup>
 </Project>

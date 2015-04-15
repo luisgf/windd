@@ -162,6 +162,7 @@
   </ItemGroup>
   <ItemGroup>
     <Image Include="..\..\..\..\..\..\Users\e332537\Desktop\diskstruct.ico" />
+    <Image Include="..\..\..\..\..\..\Users\e332537\Downloads\dumphd.ico" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

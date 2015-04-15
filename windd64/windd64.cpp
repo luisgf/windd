@@ -32,7 +32,7 @@ VOID Disclaimer() {
 
 DWORD WINAPI ReadSect(LPVOID lpParam)
 {
-	DWORD dwRead;			// bytes readed
+	DWORD dwRead;								// bytes readed
 	BOOL rs = FALSE;
 	PTPARAMS param = (PTPARAMS)lpParam;			// Thread parameters
 	LONGLONG cursect = param->StartSector;
@@ -63,7 +63,7 @@ DWORD WINAPI ReadSect(LPVOID lpParam)
 
 			if (dwRead != data->size) {
 				wprintf(L"Error reading sector: %lu\n", param->StartSector);
-				exit(-1);
+				return -1;
 			}
 
 			dwWaitResult = WaitForSingleObject(
@@ -208,17 +208,17 @@ BOOL OpenDescriptors(LPTSTR InDev, LPTSTR OutDev, PHANDLE hInDev, PHANDLE hOutDe
 	*hInDev = CreateFileW(InDev, desired_mask, acces_mask, 0, OPEN_EXISTING, FILE_FLAG_NO_BUFFERING, 0);
 	if (*hInDev == INVALID_HANDLE_VALUE)
 	{
-		std::cout << "Open source descriptor error: " << GetLastError();
+		wprintf(L"Open source descriptor error: %lu", GetLastError());
 		CloseHandle(*hInDev);
 		return FALSE;
 	}
 	
 	SetFilePointer(*hInDev, 0, 0, FILE_BEGIN); // empezamos en el sector 0
 
-	*hOutDev = CreateFile(OutDev, GENERIC_WRITE, FILE_SHARE_WRITE, 0, CREATE_ALWAYS, FILE_FLAG_NO_BUFFERING, 0);
+	*hOutDev = CreateFile(OutDev, desired_mask, acces_mask, 0, CREATE_ALWAYS, FILE_FLAG_NO_BUFFERING, 0);
 	if (*hOutDev == INVALID_HANDLE_VALUE)
 	{
-		std::cout << "Out destination descriptor error: " << GetLastError();
+		wprintf(L"Out destination descriptor error: %lu", GetLastError());
 		CloseHandle(*hOutDev);
 		return FALSE;
 	}	
