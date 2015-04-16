@@ -1,5 +1,5 @@
-ndd64 
-*******
+winndd64 
+********
 
 (c) 2015 Luis González Fernández - luisgf@luisgf.es
 ---------------------------------------------------
@@ -23,22 +23,20 @@ using the MemBuff parameter.
 
 ::
 
-  Usage: windd64.exe /if:INPUT /of:OUTPUT /buffer:200
-
-  Parameters:
-  /?               Show this help
-  /if              Input block device or file. Like \\.\PhysicalDrive0
-  /of              Source block device or file. Like D:\image.windd
-  /buffer          Amount of memory to use as buffer. In Mb, default=100
-  /ibs             Input block size (in bytes)
-  /obs             Output block size (in bytes)
-  /bs              Block size (Input & Output), overwrite ibs and obs (in bytes)
-  /skip            Skip n bytes at input start
-  /seek            Seek n bytes at output
-  /nd              Hide the disclaimer banner.
-  /v               Verbose Output. Show more info about reader/writer parameters.
-
-
+    Usage: windd64.exe /if:INPUT /of:OUTPUT /buffer:200
+    
+    Parameters:
+    /?               Show this help
+    /if              Input block device or file. Like \\.\PhysicalDrive0
+    /of              Source block device or file. Like D:\image.windd
+    /buffer          Amount of memory to use as buffer. In Mb, default=100
+    /ibs             Input block size (in bytes)
+    /obs             Output block size (in bytes)
+    /bs              Block size (Input & Output), overwrite ibs and obs (in bytes)
+    /skip            Skip n bytes at input start
+    /seek            Seek n bytes at output
+    /nd              Hide the disclaimer banner.
+    /v               Verbose Output. Show more info about reader/writer parameters.
 
 
 Clone a disk in a image file
