@@ -16,16 +16,24 @@ LPVOID xmalloc(size_t size) {
 }
 
 VOID Usage(LPCTSTR ProgName) {
-	wprintf(L"Usage: %s source destination BufferSize\n\n", ProgName);
-	wprintf(L"Source:\t\tA block device or file. Like \\\\.\\PhysicalDrive0\n");
-	wprintf(L"Destination:\tA block device or file. Like D:\\image.windd\n");
-	wprintf(L"Buffer:\t\tAmount of memory in MB to use as buffer. Like: 100\n");
+	wprintf(L"Usage: %s /if:INPUT /of:OUTPUT /buffer:200\n\n", ProgName);
+	wprintf(L"Parameters:\n");
+	wprintf(L"/?\t\t Show this help\n");
+	wprintf(L"/if\t\t Input block device or file. Like \\\\.\\PhysicalDrive0\n");
+	wprintf(L"/of\t\t Source block device or file. Like D:\\image.windd\n");
+	wprintf(L"/buffer\t\t Amount of memory to use as buffer. In Mb, default=100\n");	
+	wprintf(L"/ibs\t\t Input block size (in bytes)\n");
+	wprintf(L"/obs\t\t Output block size (in bytes)\n");
+	wprintf(L"/bs\t\t Block size (Input & Output), overwrite ibs and obs (in bytes)\n");
+	wprintf(L"/skip\t\t Skip n bytes at input start\n");
+	wprintf(L"/seek\t\t Seek n bytes at output\n");
+	wprintf(L"/nd\t\t Hide the disclaimer banner.\n");
+	wprintf(L"/v\t\t Verbose Output. Show more info about reader/writer parameters.\n");
 	wprintf(L"\n\n");
 	exit(0);
 }
 
-VOID Disclaimer() {
-	wprintf(L">>> windd v%d.%d - By Luis Gonzalez Fernandez\n", VERSION_MAJOR, VERSION_MINOR);
+VOID Disclaimer() {	
 	wprintf(L"WARNING: This program commes without warranty and can damage your computer\n");
 	wprintf(L"if used incorrectly. Use with caution.\n\n");
 }
@@ -34,77 +42,85 @@ DWORD WINAPI ReadSect(LPVOID lpParam)
 {
 	DWORD dwRead;								// bytes readed
 	BOOL rs = FALSE;
-	PTPARAMS param = (PTPARAMS)lpParam;			// Thread parameters
-	LONGLONG cursect = param->StartSector;
 	DWORD dwWaitResult;
-	PDATA data = NULL;
-	SIZE_T TotalReaded = 0;
-	LONGLONG NumSectorsToRead = 0;
+	PDATA data = NULL;							// pointer to disk data readed
+	PTPARAMS param = (PTPARAMS)lpParam;			// Thread parameters
+	LONGLONG CurrentOffset = param->StartOffset;	
+	DWORD BytesToRead = MB_TO_BYTES(20);		// read 20 mb at a time
+	
+	if (param->Verbose)
+		wprintf(L"Reader(): StartOffset %lu, EndOffset: %lu, Size %lu, SectorSize: %lu\n", param->StartOffset, param->EndOffset, param->DiskSize, param->SectorSize);
 
-	while (cursect != param->DiskSectors) {
-		if (param->DiskSectors - cursect < param->SectorsAtTime) {
-			// estamos al final del dispositivo y no hay tantos bloques que leer.			
-			NumSectorsToRead = param->DiskSectors - cursect;
-		}
-		else {			
-			NumSectorsToRead = param->SectorsAtTime;
-		}
+	if (param->StartOffset) {
+		LARGE_INTEGER liStart;
+		liStart.QuadPart = param->StartOffset;
+		SetFilePointerEx(param->hDev, liStart, NULL, FILE_BEGIN);
+	}
 
+	while (CurrentOffset != param->EndOffset) {		
 		if (param->cola->size > param->MemBuff) {
 			// Queue Full. Sleep...
 			Sleep(100);
 		}
 		else {
+			// estamos al final del dispositivo y no hay tantos bloques que leer.			
+			if (param->EndOffset - CurrentOffset < BytesToRead)
+				BytesToRead = (DWORD)(param->EndOffset - CurrentOffset);
+			
 			data = (PDATA)xmalloc(sizeof(DATA));
-			data->sector_num = NumSectorsToRead;
-			data->size = param->SectorSize * (DWORD)data->sector_num;
+			data->size = BytesToRead;
 			data->ptr = (LPVOID)xmalloc(data->size);
 			rs = ReadFile(param->hDev, data->ptr, data->size, &dwRead, 0);  // read sector	
 
 			if (dwRead != data->size) {
-				wprintf(L"Error reading sector: %lu\n", param->StartSector);
+				wprintf(L"Error reading at offset: %lu\n", CurrentOffset);
 				return -1;
 			}
 
-			dwWaitResult = WaitForSingleObject(
-				param->Mutex,    // handle to mutex
-				INFINITE);  // no time-out interval
+			dwWaitResult = WaitForSingleObject(param->Mutex, INFINITE); 
 
 			switch (dwWaitResult)
 			{
 				// The thread got ownership of the mutex
-			case WAIT_OBJECT_0:
-				__try {
-					param->cola->ptr->push(data);
-					param->cola->size += data->size;
-					TotalReaded += data->size;
-					cursect += data->sector_num;
-				}
-				__finally {
-					ReleaseMutex(param->Mutex);
-				}
+				case WAIT_OBJECT_0:
+					__try {
+						param->cola->ptr->push(data);
+						param->cola->size += BytesToRead;
+						param->DataProcessed += BytesToRead;
+					}
+					__finally {
+						ReleaseMutex(param->Mutex);
+					}
 				break;
 			}
-			wprintf(L"\rCompleted: %.2f %%", (float)((float)(cursect * 100) / (float)param->DiskSectors));
+			CurrentOffset += BytesToRead;
+			wprintf(L"\rCompleted: %.2f %%", (float)((float)(CurrentOffset * 100) / (float)param->DiskSize));
 		}
 	}
-	wprintf(L"\rData Readed: %lu bytes\n", TotalReaded);
+	if (param->Verbose)
+		wprintf(L"\rData Readed: %lu bytes\n", param->DataProcessed);
 	return rs;
 }
 
 DWORD WINAPI WriteSect(LPVOID lpParam)
 {
-	PTPARAMS param = (PTPARAMS)lpParam;
-	LONGLONG sectors_writed = { 0 };
+	PTPARAMS param = (PTPARAMS)lpParam;	
 	DWORD dwWaitResult;
 	PDATA data = NULL;
-	BOOL rs = FALSE;
-	SIZE_T TotalWrited = 0;
+	BOOL rs = FALSE;	
+	ULONGLONG CurrentOffset = param->StartOffset;
 
-	while (sectors_writed != param->DiskSectors) {
-		dwWaitResult = WaitForSingleObject(
-			param->Mutex,    // handle to mutex
-			INFINITE);  // no time-out interval
+	if (param->Verbose)
+		wprintf(L"Writer(): StartOffset %lu, EndOffset: %lu, Size %lu, SectorSize: %lu\n", param->StartOffset, param->EndOffset, param->DiskSize, param->SectorSize);
+
+	if (param->StartOffset) {
+		LARGE_INTEGER liStart;
+		liStart.QuadPart = param->StartOffset;
+		SetFilePointerEx(param->hDev, liStart, NULL, FILE_BEGIN);
+	}
+
+	while (CurrentOffset != param->EndOffset) {
+		dwWaitResult = WaitForSingleObject(param->Mutex, INFINITE);
 
 		switch (dwWaitResult)
 		{
@@ -112,7 +128,7 @@ DWORD WINAPI WriteSect(LPVOID lpParam)
 		case WAIT_OBJECT_0:
 			__try {
 				if (param->cola->size == 0) {
-					//wprintf(L"\rQueue Depleted. Waiting...\n");
+					// Queue depleted
 					Sleep(100);
 				}
 				else {
@@ -133,8 +149,8 @@ DWORD WINAPI WriteSect(LPVOID lpParam)
 					
 					param->cola->ptr->pop();
 					param->cola->size -= data->size;
-					TotalWrited += data->size;
-					sectors_writed += data->sector_num;
+					param->DataProcessed += data->size;										
+					CurrentOffset += data->size;
 
 					free(data->ptr);
 					free(data);
@@ -147,7 +163,9 @@ DWORD WINAPI WriteSect(LPVOID lpParam)
 			break;
 		}
 	}
-	wprintf(L"Data Writed: %lu bytes\n", TotalWrited);
+	if (param->Verbose)
+		wprintf(L"Data Writed: %lu bytes\n", param->DataProcessed);
+
 	return rs;
 }
 
@@ -155,7 +173,7 @@ DWORD WINAPI WriteSect(LPVOID lpParam)
 ** Get the disk geometry info
 */
 
-BOOL GetDriveGeometry(HANDLE hDisk, PDWORD SectorSize, PLONGLONG DiskSectors, PLONGLONG DiskSize) {
+BOOL GetDescriptorGeometry(HANDLE hDevice, PDWORD SectorSize, PLONGLONG DiskSize) {
 	BOOL bResult = FALSE;                 // results flag
 	DWORD junk = 0;                     // discard results
 	DISK_GEOMETRY_EX pdg = { 0 };
@@ -170,7 +188,7 @@ BOOL GetDriveGeometry(HANDLE hDisk, PDWORD SectorSize, PLONGLONG DiskSectors, PL
 	* to DISK_GEOMETRY_EX
 	*/
 
-	bResult = DeviceIoControl(hDisk, IOCTL_STORAGE_QUERY_PROPERTY, 
+	bResult = DeviceIoControl(hDevice, IOCTL_STORAGE_QUERY_PROPERTY,
 		&Query, sizeof(STORAGE_PROPERTY_QUERY),
 		&pAlignmentDescriptor, sizeof(STORAGE_ACCESS_ALIGNMENT_DESCRIPTOR),
 		&junk, NULL);
@@ -179,7 +197,7 @@ BOOL GetDriveGeometry(HANDLE hDisk, PDWORD SectorSize, PLONGLONG DiskSectors, PL
 		*SectorSize = pAlignmentDescriptor.BytesPerPhysicalSector;
 	} 
 
-	bResult = DeviceIoControl(hDisk,                       // device to be queried
+	bResult = DeviceIoControl(hDevice,                       // device to be queried
 			IOCTL_DISK_GET_DRIVE_GEOMETRY_EX, // operation to perform
 			NULL, 0,                       // no input buffer
 			&pdg, sizeof(pdg),            // output buffer
@@ -191,10 +209,23 @@ BOOL GetDriveGeometry(HANDLE hDisk, PDWORD SectorSize, PLONGLONG DiskSectors, PL
 			*SectorSize = pdg.Geometry.BytesPerSector;
 
 		*DiskSize = pdg.DiskSize.QuadPart;
-		*DiskSectors = pdg.DiskSize.QuadPart / *SectorSize;
+	}
+	else {
+		// Ok, the descriptor must be a file rather than a block device
+		LARGE_INTEGER FileSize;
+		GetFileSizeEx(hDevice, &FileSize);
+		*SectorSize = 4096;			// TODO: detect NTFS cluster Size
+		*DiskSize = FileSize.QuadPart;
+		bResult = TRUE;
+
+
+		if (!FileSize.QuadPart) {
+			wprintf(L"Unable to get descriptor Geometry\n");
+			bResult = FALSE;
+		}
 	}
 
-	return (bResult);
+	return bResult;
 }
 
 /*
@@ -227,33 +258,140 @@ BOOL OpenDescriptors(LPTSTR InDev, LPTSTR OutDev, PHANDLE hInDev, PHANDLE hOutDe
 	return TRUE;
 }
 
+/*
+	Parse de program arguments. Return TRUE all arguments are parsed correctly, FALSE otherwise.
+	Valid parameters are:
+
+	/if			Input device
+	/of			Output device
+	/bs			Block size for input and output (in bytes)
+	    /ibs	Input block size (in bytes)
+	    /obs	Output block size (in bytes)
+	/buffer		Memory buffer (in Mb, default=100)
+	/nd			No Disclaimer.
+
+	Note: Block size are autodetected unless you force it with /ibs,/obs or /bs.
+*/
+BOOL ParseProgramArguments(PARGUMENTS pParams, DWORD args, _TCHAR **argv) {
+	LPCTSTR param = NULL;	
+
+	if (args < 2) {
+		wprintf(L"Too few arguments. Use /? to get the help.\n");
+		return FALSE;
+	}
+
+	// Default Values
+	pParams->Verbose = FALSE;
+	pParams->NoDisclaimer = FALSE;
+	pParams->dwBuff = MB_TO_BYTES(100);
+	pParams->dwSkip = 0;
+	pParams->dwSeek = 0;
+
+	// Skip argv[0], that is the path to the program executable.
+	for (DWORD i = 1; i < args; i++){
+		param = argv[i];
+		if (param[0] != L'/' && param[0] != L'-') {
+			wprintf(L"Wrong parameter: %s\n", param);
+			return FALSE;
+		}
+
+		param++;	
+
+		if (!_wcsnicmp(param, L"?", 1)) {
+			Usage(argv[0]);
+			exit(0);
+		}
+		if (!_wcsnicmp(param, L"if:", 3)) {
+			pParams->sInDev = (LPTSTR)(param += 3);
+		}
+		if (!_wcsnicmp(param, L"of:", 3)) {
+			pParams->sOutDev = (LPTSTR)(param += 3);
+		}
+
+		if (!_wcsnicmp(param, L"bs:", 3)) {
+			LPCTSTR dwBs = (param += 3);
+			pParams->dwOutBs = pParams->dwInBs = wcstol(dwBs, NULL, 10);
+		} 
+		if (!_wcsnicmp(param, L"ibs:", 4)) {
+			LPCTSTR dwBs = (param += 4);
+			// We set too, obs to the same value as ibs, unless /obs switch is used.
+			pParams->dwOutBs = pParams->dwInBs = wcstol(dwBs, NULL, 10);
+		}
+		if (!_wcsnicmp(param, L"obs:", 4)) {
+			LPCTSTR dwBs = (param += 4);
+			pParams->dwOutBs = wcstol(dwBs, NULL, 10);
+		}		
+		if (!_wcsnicmp(param, L"buffer:", 7)) {
+			LPCTSTR dwBuff = (param += 7);
+			pParams->dwBuff = MB_TO_BYTES(wcstol(dwBuff, NULL, 10));
+		}
+		if (!_wcsnicmp(param, L"skip:", 5)) {
+			LPCTSTR dwSkip = (param += 5);
+			pParams->dwSkip = wcstol(dwSkip, NULL, 10);
+		}
+		if (!_wcsnicmp(param, L"seek:", 5)) {
+			LPCTSTR dwSeek = (param += 5);
+			pParams->dwSeek = wcstol(dwSeek, NULL, 10);
+		}
+		if (!_wcsnicmp(param, L"nd", 2)) {
+			pParams->NoDisclaimer = TRUE;			
+		}
+		if (!_wcsnicmp(param, L"v", 1)) {
+			pParams->Verbose = TRUE;
+		}
+
+		// Add next parameters parsing here...		
+	}
+
+	if (!pParams->sInDev) {
+		wprintf(L"Input (/if) parameter missing.\n");
+		return FALSE;
+	}
+	if (!pParams->sOutDev) {
+		wprintf(L"Output (/of) parameter missing.\n");
+		return FALSE;
+	}
+	if (!pParams->dwBuff) {
+		pParams->dwBuff = MB_TO_BYTES(100);		
+	}
+	// Input block size checks
+	if (pParams->dwInBs && (pParams->dwInBs < 512 || (pParams->dwInBs % 512) > 0)) {
+		wprintf(L"Input block size must be multiple of 512.\n");
+		return FALSE;
+	}
+	// Output block size checks
+	if (pParams->dwOutBs && (pParams->dwOutBs < 512 || (pParams->dwOutBs % 512) > 0)) {
+		wprintf(L"Output block size must be multiple of 512.\n");
+		return FALSE;
+	}
+
+	return TRUE;
+}
+
+
 int _tmain(int argc, _TCHAR* argv[])
 {
-	LPTSTR ifdev;
-	LPTSTR ofdev;
-	 
+	ARGUMENTS params = { 0 };					// Parsed program arguments
 	HANDLE hInDev = NULL;
 	HANDLE hOutDev = NULL;
 
 	// Disk Geometry
-	LONGLONG DiskSize = { 0 };			// disk size in bytes
-	LONGLONG DiskSectors = { 0 };		// num of sectors in disk
-	DWORD SectorSize = 4096;				// Physical sector size, def=4096
-
+	LONGLONG DiskSize = { 0 };			// disk size in bytes	
+	DWORD SectorSize;					// Physical sector size
 	std::queue <LPVOID> cola;
-	BQUEUE data = { &cola, 0};					// data queue		 
-
-	// Buffering
-	DWORD SectorsAtTime;
-	DWORD MemBuffer;
 
 	// Thread synchronization
 	HANDLE hMutex;
 	HANDLE hThread[2] = { 0 };
 	DWORD ThreadID[2] = { 0 };
-	
+
+	if (!ParseProgramArguments(&params, argc, argv)) {
+		return 1;
+	}
+	 
+	BQUEUE data = { &cola, 0};					// data queue		 
+
 #if (_WIN32_WINNT >= _WIN32_WINNT_VISTA)
-	/* A program using VSS must run in elevated mode */
 	HANDLE hToken;
 	OpenProcessToken(GetCurrentProcess(), TOKEN_READ, &hToken);
 	DWORD infoLen;
@@ -265,44 +403,21 @@ int _tmain(int argc, _TCHAR* argv[])
 		wprintf(L"This program must run in elevated mode\n");
 		return -1;
 	}
-
-
 #else
 #error you are using an old version of sdk or not supported operating system
 #endif	
-	if (argc != 4) {
-		Usage(argv[0]);		
-	}
-	else {
-		ifdev = argv[1];
-		ofdev = argv[2];
-		MemBuffer = MB_TO_BYTES(wcstol(argv[3], NULL, 10));				
-	}
 
-	if (!OpenDescriptors(ifdev, ofdev, &hInDev, &hOutDev)) {		
+	if (!OpenDescriptors(params.sInDev, params.sOutDev, &hInDev, &hOutDev))
+	{
 		return -1;
 	}
-
-	if (GetDriveGeometry(hInDev, &SectorSize, &DiskSectors, &DiskSize))
+	
+	if (!GetDescriptorGeometry(hInDev, &SectorSize, &DiskSize))
 	{
-		if (MemBuffer < SectorSize) {
-			wprintf(L"Memory buffer is not enough\n");
-			return -1;
-		}		
-	} else {
-		// No Drive geometry. This is a file HANDLE.
-		LARGE_INTEGER FileSize;
-		GetFileSizeEx(hInDev, &FileSize);
+		return -1;	
+	} 
 
-		DiskSize = FileSize.QuadPart;
-		DiskSectors = DiskSize / SectorSize;
-	}
-	SectorsAtTime = MB_TO_BYTES(20) / SectorSize;
-
-	/*
-	** Creamos el Mutex
-	*/
-
+	/* Mutex Creation */
 	hMutex = CreateMutex(NULL, FALSE, NULL);
 
 	if (hMutex == NULL)
@@ -311,43 +426,58 @@ int _tmain(int argc, _TCHAR* argv[])
 		return -1;
 	}
 
-	/*
-		Mostramos algo de informacion
-	*/
+	/* The party start now	*/
+	wprintf(L">>> windd %s - By Luis Gonzalez Fernandez\n", VERSION);
+	if (!params.NoDisclaimer)
+		Disclaimer();
+	wprintf(L"%s => %s\n", params.sInDev, params.sOutDev);
 
-	Disclaimer();
-	wprintf(L"%s => %s\n", ifdev, ofdev);
-	wprintf(L"Disk Size: %I64d Sector Size: %lu Sectors: %I64d\n", DiskSize, SectorSize, DiskSectors);
-
-	/*
-	* Creamos los threads del lector y escritor
-	*/
+	/* Reader Thread */
 	TPARAMS ReaderParams = { 0 };
 	ReaderParams.hDev = hInDev;
 	ReaderParams.cola = &data;
-	ReaderParams.StartSector = 0;
-	ReaderParams.SectorSize = SectorSize;
-	ReaderParams.DiskSectors = DiskSectors;
-	ReaderParams.MemBuff = MemBuffer;
-	ReaderParams.Mutex = hMutex;
-	ReaderParams.SectorsAtTime = SectorsAtTime;
+	ReaderParams.StartOffset = params.dwSkip;			// skip n bytes at input
+	ReaderParams.EndOffset = DiskSize;
+
+	if (params.dwInBs)
+		ReaderParams.SectorSize = params.dwInBs;
+	else 
+		ReaderParams.SectorSize = SectorSize;	
+
+	ReaderParams.MemBuff = params.dwBuff;
+	ReaderParams.Mutex = hMutex;	
+	ReaderParams.DiskSize = DiskSize;
+	ReaderParams.DataProcessed = 0;
+	ReaderParams.Verbose = params.Verbose;
 
 	hThread[0] = CreateThread(NULL, 0, ReadSect, &ReaderParams, 0, &ThreadID[0]);
 
+	/* Writer Thread */
 	TPARAMS WriterParams = { 0 };
 	WriterParams.hDev = hOutDev;
 	WriterParams.cola = &data;
-	WriterParams.StartSector = 0;
-	WriterParams.SectorSize = SectorSize;
-	WriterParams.DiskSectors = DiskSectors;
-	WriterParams.Mutex = hMutex;
-	WriterParams.SectorsAtTime = SectorsAtTime;
+	WriterParams.StartOffset = params.dwSeek;				// seek until this offset at write.
+	WriterParams.EndOffset = (DiskSize + params.dwSeek - params.dwSkip);
+
+	if (params.dwOutBs)
+		WriterParams.SectorSize = params.dwOutBs;
+	else
+		WriterParams.SectorSize = SectorSize;
 	
+	WriterParams.Mutex = hMutex;	
+	WriterParams.DiskSize = DiskSize;
+	WriterParams.DataProcessed = 0;
+	WriterParams.Verbose = params.Verbose;
+
 	hThread[1] = CreateThread(NULL, 0, WriteSect, &WriterParams, 0, &ThreadID[1]);
 
 	WaitForMultipleObjects(2, hThread, TRUE, INFINITE);
 
-	wprintf(L"Done!\n");
+	if (ReaderParams.DataProcessed == WriterParams.DataProcessed)
+		wprintf(L"Done!\n");
+	else
+		wprintf(L"Error, %lu bytes are not copied.\n", (ReaderParams.DataProcessed - WriterParams.DataProcessed));
+
 	CloseHandle(hInDev);
 	CloseHandle(hOutDev);
 
