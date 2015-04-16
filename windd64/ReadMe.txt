@@ -21,7 +21,6 @@ This are the common dumps type that the application can make:
 The memory footprint of this application is to low and can be tuned at start time
 using the MemBuff parameter.
 
-::
 
     Usage: windd64.exe /if:INPUT /of:OUTPUT /buffer:200
     
@@ -45,7 +44,7 @@ Clone a disk in a image file
 The following command will dump the Hard Disk 0 as image at location D:\image.raw 
 using a 100 Mb of memory buffer.
 
-C:\windd64>windd64.exe /if:\\.\PhysicalDrive0 /of:D:\image.raw /buffer:100
+    C:\windd64>windd64.exe /if:\\.\PhysicalDrive0 /of:D:\image.raw /buffer:100
 
 Clone disk over other
 ---------------------
@@ -53,7 +52,7 @@ Clone disk over other
 The following command will dump the Hard Disk 0 over Hard Disk 1 
 using a 100 Mb of memory buffer.
 
-C:\windd64>windd64.exe /if:\\.\PhysicalDrive0 /of:\\.\PhysicalDrive1 /buffer:100
+    C:\windd64>windd64.exe /if:\\.\PhysicalDrive0 /of:\\.\PhysicalDrive1 /buffer:100
 
 Restore a dump from file
 ------------------------
@@ -61,5 +60,5 @@ Restore a dump from file
 The following command will restore a image file over a disk using a 100 Mb
 of memory buffer.
 
-C:\windd64>windd64.exe /if:D:\image.raw /of:\\.\PhysicalDrive0 /buffer:100
+    C:\windd64>windd64.exe /if:D:\image.raw /of:\\.\PhysicalDrive0 /buffer:100
 
